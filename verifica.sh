@@ -185,6 +185,142 @@ else
     fi
 fi
 
+# ---------------------------------------------------------------------------
+secao 'dados/ — as duas fontes do dominio concordam?'
+
+# Este teste existe porque elas JA divergiram: `saldo_inicial` foi
+# acrescentado ao esquema SQL e esquecido no CSV, e tres implementacoes
+# passaram a rodar com um dominio diferente das outras sem que nada acusasse.
+# O sintoma apareceu so quando o Kuzu achou 3 campos onde o esquema prometia
+# 4 -- por acidente, nao por verificacao.
+if ! tem python3; then
+    pula 'python3 ausente'
+else
+    saida=$(python3 python/confere_carga.py 2>&1); ret=$?
+    if [ $ret -eq 0 ]; then
+        passa 'dados/*.csv e sql/carga.sql declaram o mesmo dominio'
+    else
+        falha 'as duas fontes do dominio divergem'
+        printf '%s\n' "$saida" | sed 's/^/        /' | tail -6
+    fi
+fi
+
+# ---------------------------------------------------------------------------
+# Os tres motores embarcados vivem num venv, porque o Ubuntu 26.04 marca o
+# Python do sistema como externally-managed (PEP 668) e recusa `pip install`
+# global. O venv e gitignorado: ele e ambiente, nao codigo.
+PY=.venv/bin/python
+
+secao 'cypher/ — travessia como primitiva da linguagem'
+
+if [ ! -x "$PY" ]; then
+    pula 'venv ausente: python3 -m venv .venv && .venv/bin/pip install kuzu rdflib graphql-core owlrl'
+elif ! "$PY" -c 'import kuzu' 2>/dev/null; then
+    pula 'kuzu ausente no venv'
+else
+    obtido=$("$PY" cypher/roda.py alcance --json 2>&1)
+    if [ "$obtido" = "$(cat dados/esperado/alcance.json)" ]; then
+        passa 'Cypher da a MESMA resposta, byte a byte'
+    else
+        falha "Cypher divergiu: $(printf '%s' "$obtido" | tr -d ' \n' | head -c 90)"
+    fi
+
+    # O caminho e VALIDADO, nao comparado: medido que `SHORTEST` e `ALL
+    # SHORTEST` devolvem caminhos DIFERENTES e os dois corretos, porque o
+    # menor caminho nao e unico. Comparar literalmente testaria a ordem
+    # interna do motor e reprovaria resposta certa.
+    if "$PY" cypher/roda.py caminho --json 2>/dev/null \
+         | python3 python/valida_caminho.py --saltos 4 --rotulo Cypher; then
+        :
+    else
+        FALHOU=$((FALHOU+1))
+    fi
+    OK=$((OK+1))
+fi
+
+secao 'sparql/ — property path, e a inferencia que os outros nao fazem'
+
+if [ ! -x "$PY" ] || ! "$PY" -c 'import rdflib' 2>/dev/null; then
+    pula 'rdflib ausente no venv'
+else
+    obtido=$("$PY" sparql/roda.py alcance --json 2>&1)
+    if [ "$obtido" = "$(cat dados/esperado/alcance.json)" ]; then
+        passa 'SPARQL da a MESMA resposta, byte a byte'
+    else
+        falha "SPARQL divergiu: $(printf '%s' "$obtido" | tr -d ' \n' | head -c 90)"
+    fi
+
+    # SPARQL 1.1 NAO tem caminho limitado: `{1,3}` e erro de sintaxe, porque o
+    # quantificador saiu da recomendacao final. Este teste trava a afirmacao:
+    # se uma versao futura do rdflib aceitar, o teste falha e o README precisa
+    # ser corrigido -- em vez de ficar desatualizado em silencio.
+    if "$PY" -c '
+import sys, rdflib
+g = rdflib.Graph()
+g.parse(data="@prefix : <http://e/> . :a :p :b .", format="turtle")
+try:
+    g.query("SELECT ?x WHERE { <http://e/a> <http://e/p>{1,3} ?x }")
+    sys.exit(1)
+except Exception:
+    sys.exit(0)
+' 2>/dev/null; then
+        passa 'SPARQL 1.1 recusa {1,3}, como o padrao manda'
+    else
+        falha 'o motor ACEITOU {1,3}: o README afirma que o padrao nao tem'
+    fi
+
+    # A inferencia tem de MUDAR a resposta, senao nao demonstra nada. A
+    # primeira versao punha o fato deduzido a 6 saltos da origem, longe demais
+    # para entrar no limite de 3, e a resposta nao mudava.
+    saida=$("$PY" sparql/roda.py inferencia --json 2>&1)
+    if printf '%s' "$saida" | grep -q '"Joao"' \
+       && printf '%s' "$saida" | grep -q '"Kelly"'; then
+        passa 'a inferencia traz Joao e Kelly por DEDUCAO'
+    else
+        falha 'a inferencia nao mudou a resposta'
+    fi
+fi
+
+secao 'graphql/ — o que o modelo NAO expressa'
+
+if [ ! -x "$PY" ] || ! "$PY" -c 'import graphql' 2>/dev/null; then
+    pula 'graphql-core ausente no venv'
+else
+    # A "saida 2" acerta, e e justamente o ponto: ela acerta porque a
+    # travessia roda em Python.
+    obtido=$("$PY" graphql/roda.py alcance --json 2>&1)
+    if [ "$obtido" = "$(cat dados/esperado/alcance.json)" ]; then
+        passa 'o campo alcance() acerta -- resolvendo em Python'
+    else
+        falha 'o campo alcance() divergiu'
+    fi
+
+    # A "saida 1" tem de ERRAR, e o teste verifica o erro ESPERADO. Se o
+    # aninhamento a mao passasse a dar a resposta certa, a tese do README
+    # estaria errada e este teste e que avisaria.
+    saida=$("$PY" graphql/roda.py aninhado --json 2>&1)
+    if printf '%s' "$saida" | grep -q '"tem_a_origem": true'; then
+        passa 'o aninhamento a mao traz a ORIGEM de volta (ciclo)'
+    else
+        falha 'o aninhamento nao reproduziu o ciclo que o README descreve'
+    fi
+
+    if printf '%s' "$saida" | grep -q '"ciclos": [1-9]'; then
+        passa 'e tem caminho com repeticao, que nenhum tipo impede'
+    else
+        falha 'nenhum ciclo no aninhamento: o README descreve outro resultado'
+    fi
+
+    # A selecao rica tem de funcionar: e o lado em que GraphQL GANHA, e
+    # mostrar so o lado em que ele perde seria escolher a prova.
+    if "$PY" graphql/roda.py selecao --json 2>/dev/null \
+         | grep -q '"saldo": 834.75'; then
+        passa 'a selecao rica traz 3 formas de dados numa requisicao'
+    else
+        falha 'a selecao rica falhou'
+    fi
+fi
+
 printf '\n%s\n' '=============================================================='
 if [ "$PULADO" -gt 0 ]; then
     printf '  %s passaram, %s falharam, %s pulado(s)\n' \

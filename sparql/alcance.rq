@@ -1,0 +1,80 @@
+#  alcance.rq — "quem está a até 3 saltos de amizade de Ana?", em SPARQL 1.1.
+#
+#  ## O achado desta consulta: SPARQL não sabe limitar
+#
+#  A versão inicial deste projeto afirmava, numa tabela comparativa, que o
+#  SPARQL responde isto com um *property path* `:conhece{1,3}`.
+#
+#  **Está errado, e o erro é instrutivo.** O quantificador `{n,m}` existiu num
+#  RASCUNHO do SPARQL 1.1 e foi **removido da recomendação final**. Medido com
+#  rdflib 7.6.0:
+#
+#      :conhece+        aceito      fecho transitivo ILIMITADO
+#      :conhece{1,3}    ParseException: Expected SelectQuery
+#
+#  Então o SPARQL tem a travessia que o SQL só alcança com CTE recursivo, e
+#  **não tem** a que o Cypher escreve como `*1..3`. A pergunta foi escolhida
+#  bem o bastante para expor que cada modelo ganha e perde num eixo diferente:
+#
+#      pergunta                        SQL      Cypher   SPARQL
+#      -------------------------------------------------------
+#      alcançável a qualquer distância  caro     facil    FACIL
+#      alcançável em até N saltos       caro     FACIL    caro
+#
+#  ## O preço, e ele está visível abaixo
+#
+#  Sem quantificador limitado, "até 3 saltos" é a UNIÃO de três caminhos de
+#  comprimento fixo, cada um ligando a distância que representa. E como uma
+#  pessoa aparece em mais de um ramo (Elisa é alcançável em 2 e em 4 saltos),
+#  a distância verdadeira é o `MIN`.
+#
+#  É exatamente o mesmo `MIN` do SQL e do Cypher -- essa parte nenhum dos três
+#  resolve de graça.
+#
+#  ## O que o `^` faz, e por que ele é necessário aqui
+#
+#  `:conhece` é gravado num sentido só, como a tabela `amizade` do SQL. Em
+#  Cypher, `-[:AMIGO]-` sem seta já atravessa os dois lados.
+#
+#  Em SPARQL o equivalente é `(:conhece|^:conhece)`: a barra é alternativa e o
+#  circunflexo inverte a direção. É mais explícito que o Cypher e muito mais
+#  curto que o `UNION ALL` espelhando a tabela em SQL.
+#
+#  A nota honesta: `(:conhece|^:conhece)` precisa de parênteses para a
+#  alternativa valer antes da sequência. Sem eles, `:conhece|^:conhece/...`
+#  associa errado e a resposta muda em silêncio.
+
+PREFIX : <http://exemplo.org/qlab#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+
+SELECT ?nome (MIN(?d) AS ?saltos)
+WHERE {
+  ?origem rdfs:label "Ana" .
+
+  {
+    # Um salto.
+    ?origem (:conhece|^:conhece) ?p .
+    BIND(1 AS ?d)
+  }
+  UNION
+  {
+    # Dois saltos.
+    ?origem (:conhece|^:conhece)/(:conhece|^:conhece) ?p .
+    BIND(2 AS ?d)
+  }
+  UNION
+  {
+    # Três saltos.
+    ?origem (:conhece|^:conhece)/(:conhece|^:conhece)/(:conhece|^:conhece) ?p .
+    BIND(3 AS ?d)
+  }
+
+  # Exclui a origem. Num grafo com ciclo, Ana é alcançável de volta a si
+  # mesma em 2 saltos (Ana->Bruno->Ana), então sem este filtro ela
+  # APARECERIA. A mesma decisão está explícita nas outras implementações.
+  FILTER(?p != ?origem)
+
+  ?p rdfs:label ?nome .
+}
+GROUP BY ?nome
+ORDER BY ?saltos ?nome

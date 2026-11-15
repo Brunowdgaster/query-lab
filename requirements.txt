@@ -1,0 +1,31 @@
+# Os motores embarcados do p10, com versao FIXA.
+#
+# Fixar e o mesmo argumento do nixpkgs travado no p12 e do AutoHotkey 2.0.31:
+# "latest" nao responde "com o que isso foi verificado". E aqui o risco e
+# concreto -- a suite afirma que o SPARQL 1.1 RECUSA `{1,3}`, e uma versao
+# futura do rdflib que aceitasse como extensao tornaria o README errado.
+# Com versao fixa, essa mudanca aparece como atualizacao deliberada.
+#
+# Todos sao livres e embarcados: nenhum servidor, nenhuma JVM, nenhum
+# conteiner.
+
+# Cypher. Embarcado como o SQLite, licenca MIT.
+#
+# Neo4j Community tambem e livre, mas e um servidor em JVM (~500 MB) para
+# subir e derrubar no CI -- e para comparar MODELOS de dados o servidor nao
+# acrescenta nada. A ressalva honesta: Kuzu implementa um SUBCONJUNTO do
+# Cypher do Neo4j, e duas divergencias reais estao documentadas em
+# cypher/caminho.cypher.
+kuzu==0.11.3
+
+# SPARQL 1.1 e RDF. Armazenamento de triplas com motor SPARQL -- e so isso:
+# rdflib NAO faz inferencia sozinho.
+rdflib==7.6.0
+
+# A inferencia RDFS/OWL-RL, que e a demonstracao do que o modelo RDF faz e os
+# outros dois nao. Separado do rdflib justamente porque a deducao e capacidade
+# do MODELO, nao de qualquer biblioteca que leia RDF.
+owlrl==7.6.2
+
+# GraphQL. A implementacao de referencia, porta do graphql-js.
+graphql-core==3.3.2

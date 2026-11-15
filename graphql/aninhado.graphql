@@ -1,0 +1,32 @@
+# aninhado.graphql — a "saida 1": aninhar `amigos` tres niveis a mao.
+#
+# E o que a maioria dos tutoriais de GraphQL mostra para "amigos de amigos", e
+# este arquivo existe para medir o que ela de fato devolve -- em vez de supor.
+#
+# Os tres problemas, todos verificaveis rodando `roda.py aninhado`:
+#
+#   1. a PROFUNDIDADE esta no texto. "Ate 4 saltos" e outra consulta, nao
+#      outro argumento: um cliente que precise variar a profundidade tem de
+#      GERAR GraphQL;
+#
+#   2. a resposta e uma ARVORE COM REPETICAO, nao um conjunto com distancias.
+#      Cabe ao cliente desduplicar e tirar o minimo -- que nas outras quatro
+#      linguagens e uma palavra na consulta;
+#
+#   3. o CICLO VOLTA. Ana e amiga de Bruno, que e amigo de Ana: no nivel 2 a
+#      propria origem reaparece. Nada no esquema impede, porque `amigos:
+#      [Pessoa!]!` e um tipo recursivo sem nocao de caminho percorrido.
+{
+  pessoa(nome: "Ana") {
+    nome
+    amigos {
+      nome
+      amigos {
+        nome
+        amigos {
+          nome
+        }
+      }
+    }
+  }
+}

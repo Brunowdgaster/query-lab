@@ -1,2 +1,5 @@
 *.db
 .tmp/
+
+# O venv e ambiente, nao codigo: reconstruivel por pip install
+.venv/

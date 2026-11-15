@@ -1,0 +1,111 @@
+# esquema.graphql — o mesmo domínio em GraphQL, e o que ele NÃO expressa.
+#
+# ## A conclusão, antes do esquema
+#
+# As outras quatro linguagens deste projeto respondem "quem está a até 3
+# saltos de amizade de Ana?" com uma consulta. **GraphQL não consegue.**
+#
+# E não por limitação de implementação: é o modelo. GraphQL é uma linguagem de
+# SELEÇÃO sobre um grafo de tipos, não de CONSULTA sobre um grafo de dados. O
+# cliente escolhe quais campos quer de uma forma que o servidor já fixou; ele
+# não escreve travessia.
+#
+# Há exatamente três saídas, e todas as três estão abaixo, implementadas, para
+# que a afirmação seja verificável em vez de alegada.
+#
+# ## Saída 1: aninhar à mão, N níveis
+#
+#     { pessoa(nome: "Ana") {
+#         amigos { nome
+#           amigos { nome
+#             amigos { nome } } } } }
+#
+# Funciona, e é o que a maioria dos tutoriais mostra. Os problemas são reais:
+#
+#   * **a profundidade está no texto da consulta.** "Até 4 saltos" é outra
+#     consulta, não outro argumento. Um cliente que precise variar a
+#     profundidade precisa GERAR GraphQL;
+#   * **a resposta é uma árvore com repetição**, não um conjunto com
+#     distâncias. Bruno aparece como amigo de Ana e como amigo de Diego, e
+#     cabe ao cliente desduplicar e calcular o mínimo;
+#   * **o ciclo volta.** Ana é amiga de Bruno, que é amigo de Ana: no nível 2
+#     a própria Ana reaparece, e no nível 3 Bruno de novo. Nada no esquema
+#     impede isso;
+#   * e o custo explode: profundidade 3 num grafo denso é um produto
+#     cartesiano que o servidor executa sem reclamar.
+#
+# ## Saída 2: um campo que já é a resposta
+#
+#     { alcance(de: "Ana", saltos: 3) { nome saltos } }
+#
+# Funciona bem, e é o que se faz em produção. Mas note o que aconteceu: **a
+# travessia virou código do servidor.** O `saltos: 3` é um argumento que um
+# resolver em Python interpreta -- e o resolver aqui chama exatamente o mesmo
+# BFS de `python/referencia.py`.
+#
+# Ou seja: a pergunta não é respondida em GraphQL. É respondida em Python, e o
+# GraphQL é o envelope. Isso não é defeito -- é o que GraphQL se propõe a ser.
+# Mas num projeto que compara LINGUAGENS DE CONSULTA, chamar isso de "GraphQL
+# resolve" seria desonesto.
+#
+# ## Saída 3: admitir que a pergunta é outra
+#
+# GraphQL é melhor que os outros quatro numa coisa que este projeto não media
+# até agora: **buscar formas diferentes de dados numa única ida ao servidor,
+# com o cliente decidindo o formato.**
+#
+#     { pessoa(nome: "Ana") {
+#         nome cidade saldo
+#         amigos { nome cidade }
+#         enviadas { valor para { nome } } } }
+#
+# Em SQL isso são três consultas, ou uma com JOIN que devolve linhas
+# repetidas e exige remontar a hierarquia no cliente. Em Cypher, idem. O
+# `alcance_demonstra_limite.graphql` e o `selecao_rica.graphql` deste
+# diretório mostram os dois lados lado a lado.
+
+type Pessoa {
+  id: Int!
+  nome: String!
+  cidade: String!
+
+  # O saldo é CALCULADO pelo resolver, somando as transações -- a mesma regra
+  # de `sql/saldo.sql`. Num esquema GraphQL, um campo derivado é
+  # indistinguível de um campo armazenado, e isso é uma vantagem real: o
+  # cliente não sabe nem precisa saber.
+  saldo: Float!
+
+  # A amizade é não dirigida, e o resolver espelha as arestas -- o mesmo que
+  # o `UNION ALL` do SQL faz. No TIPO, porém, `amigos` é uma lista comum: não
+  # há como declarar "esta relação é simétrica", como `owl:SymmetricProperty`
+  # faz em RDF.
+  amigos: [Pessoa!]!
+
+  enviadas: [Transacao!]!
+  recebidas: [Transacao!]!
+}
+
+type Transacao {
+  valor: Float!
+  data: String!
+  de: Pessoa!
+  para: Pessoa!
+}
+
+type PessoaComDistancia {
+  nome: String!
+  saltos: Int!
+}
+
+type Query {
+  pessoa(nome: String!): Pessoa
+
+  pessoas: [Pessoa!]!
+
+  # O campo da "saída 2". Ele RESPONDE a pergunta, e o faz em Python.
+  #
+  # O argumento `saltos` ser um Int é justamente a prova de que a travessia
+  # não está na linguagem: em Cypher, o `3` de `*1..3` é parte da EXPRESSÃO
+  # de consulta; aqui ele é um dado que o servidor recebe e interpreta.
+  alcance(de: String!, saltos: Int!): [PessoaComDistancia!]!
+}

@@ -1,0 +1,32 @@
+# selecao_rica.graphql — onde GraphQL ganha dos outros quatro.
+#
+# Este projeto compara linguagens de consulta usando uma pergunta de
+# TRAVESSIA, e nela o GraphQL perde de longe. Mostrar so isso seria escolher a
+# prova para chegar na conclusao.
+#
+# Esta consulta e a outra direcao: tres formas DIFERENTES de dados -- um
+# escalar calculado, uma lista de pessoas, e uma lista de transacoes com o
+# destinatario embutido -- numa unica ida ao servidor, com o CLIENTE
+# escolhendo o formato.
+#
+# Em SQL sao tres consultas, ou uma com JOIN que devolve linhas repetidas e
+# deixa remontar a hierarquia para o cliente. Em Cypher, idem. E o `saldo` ser
+# calculado no servidor e invisivel ao cliente: campo derivado e campo
+# armazenado sao indistinguiveis no tipo.
+{
+  pessoa(nome: "Ana") {
+    nome
+    cidade
+    saldo
+    amigos {
+      nome
+      cidade
+    }
+    enviadas {
+      valor
+      para {
+        nome
+      }
+    }
+  }
+}

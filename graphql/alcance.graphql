@@ -1,0 +1,18 @@
+# alcance.graphql — a "saida 2": um campo que JA E a resposta.
+#
+# Compare com o Cypher, que responde a mesma pergunta assim:
+#
+#     MATCH (a:Pessoa {nome:'Ana'})-[:AMIGO*1..3]-(p) ...
+#
+# Aqui o `saltos: 3` e um ARGUMENTO que o servidor recebe e interpreta. La, o
+# `3` de `*1..3` e parte da EXPRESSAO de consulta, avaliada pelo motor.
+#
+# A diferenca nao e cosmetica: significa que a travessia deste arquivo esta
+# escrita em Python, em `graphql/roda.py`, chamando o mesmo BFS de
+# `python/referencia.py`. O GraphQL e o envelope.
+{
+  alcance(de: "Ana", saltos: 3) {
+    nome
+    saltos
+  }
+}

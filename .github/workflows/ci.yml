@@ -29,6 +29,17 @@ jobs:
           sudo -u postgres psql -tAc 'select version()'
           sqlite3 --version
 
+      - name: motores embarcados (Cypher, SPARQL, GraphQL)
+        run: |
+          # Num venv porque o Ubuntu marca o Python do sistema como
+          # externally-managed (PEP 668) e recusa `pip install` global. E com
+          # versao FIXA, pelo mesmo argumento do nixpkgs travado.
+          python3 -m venv .venv
+          ./.venv/bin/pip install -q --disable-pip-version-check -r requirements.txt
+          # Falha ALTO se algum nao importar. Sem isto a suite PULARIA tres
+          # linguagens e passaria verde.
+          ./.venv/bin/python -c 'import kuzu, rdflib, owlrl, graphql; print("kuzu", kuzu.__version__, "| rdflib", rdflib.__version__, "| graphql-core", graphql.version)'
+
       - name: a suite, em modo exigente
         # QLAB_EXIGE=1 transforma "pulado" em FALHA: no CI, uma dependencia
         # ausente e um defeito do ambiente, nao um resultado.

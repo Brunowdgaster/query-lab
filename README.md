@@ -4,8 +4,10 @@ Um domínio (grafo social + transações), uma pergunta, e implementações em
 **SQL ANSI, PL/pgSQL, PL/SQL, T-SQL, Cypher, SPARQL, GraphQL e Python** — que
 têm de dar **a mesma resposta**, verificada por script.
 
-> **Status:** 3 das 8 linguagens feitas e verificadas, com **12 testes**.
-> Python, SQL ANSI e PL/pgSQL estão completos. Ver [Roadmap](#roadmap).
+> **Status:** 6 das 8 linguagens feitas e verificadas, com **22 testes**.
+> Python, SQL ANSI, PL/pgSQL, Cypher, SPARQL e GraphQL estão completos. Faltam
+> T-SQL e PL/SQL, que exigem contêineres de 1,5 GB e 2,5 GB. Ver
+> [Roadmap](#roadmap).
 
 A tese não é "sei oito dialetos". É que **modelo de dados é uma escolha com
 consequências**, e a única forma honesta de mostrar isso é fazer a mesma
@@ -28,10 +30,13 @@ Resposta: **Bruno e Carla** (1 salto), **Diego e Elisa** (2), **Fabio** (3).
 | linguagem | como se expressa | custo |
 |---|---|---|
 | **Cypher** | `-[:AMIGO*1..3]-` | uma expressão |
-| **SPARQL** | *property path* com `{1,3}` | uma expressão |
 | **SQL** | CTE recursivo | espelhar aresta + controlar ciclo + contar saltos à mão |
+| **SPARQL** | **união de três caminhos fixos** | o padrão **não tem** repetição limitada — ver abaixo |
 | **GraphQL** | **não se expressa** | o tipo não tem recursão; o resolver é que resolve |
 | **Python** | BFS | dez linhas, e nenhuma mágica |
+
+Todas as seis implementações dão **a mesma resposta**, e a suíte compara byte
+a byte contra `dados/esperado/alcance.json`.
 
 ### O limite de 3 não é decoração
 
@@ -85,6 +90,185 @@ E ela **não dá COMMIT**, de propósito: deixa a transação com o chamador, pa
 que várias transferências possam ser atômicas em conjunto. É a decisão oposta
 à que o PL/SQL toma por hábito, e a comparação entre os três dialetos vai em
 `docs/COMPARACAO.md` quando os outros dois estiverem feitos.
+
+### `cypher/` — travessia como primitiva
+
+```cypher
+MATCH caminho = (origem:Pessoa {nome: 'Ana'})-[:AMIGO*1..3]-(p:Pessoa)
+WHERE p.nome <> 'Ana'
+RETURN p.nome AS nome, min(length(caminho)) AS saltos
+ORDER BY saltos, nome;
+```
+
+As três coisas que o SQL faz à mão e aqui não existem: `-[:AMIGO]-` sem seta
+**já atravessa os dois sentidos**; Cypher **não repete relacionamento** dentro
+de um caminho, então não há controle de ciclo; e `length(caminho)` sai do
+próprio caminho.
+
+O que o Cypher **não** resolve de graça: a travessia devolve um caminho por
+rota, não um nó por pessoa, então o `min(...)` é tão necessário quanto em SQL.
+Dizer isso é o que separa comparação de propaganda.
+
+O motor é o **Kuzu** — embarcado como o SQLite, licença MIT, sem servidor nem
+JVM. Duas divergências reais com o Cypher do Neo4j estão documentadas:
+`SHORTEST 1` **compila e devolve zero linhas**, e a compreensão de lista
+`[n IN nodes(c) | n.nome]` não é aceita (`Variable n is not in scope`).
+
+### `sparql/` — e a correção de uma afirmação minha
+
+A primeira versão deste README dizia que o SPARQL responde a pergunta com
+`:conhece{1,3}`. **Está errado.** O quantificador `{n,m}` existiu num
+*rascunho* do SPARQL 1.1 e **foi removido da recomendação final**:
+
+```
+:conhece+        aceito      fecho transitivo ILIMITADO
+:conhece{1,3}    ParseException: Expected SelectQuery
+```
+
+Então o SPARQL tem a travessia que o SQL só alcança com CTE recursivo, e **não
+tem** a que o Cypher escreve como `*1..3`. Cada modelo ganha e perde num eixo
+diferente:
+
+| pergunta | SQL | Cypher | SPARQL |
+|---|---|---|---|
+| alcançável a **qualquer** distância | caro | fácil | **fácil** |
+| alcançável em **até N** saltos | caro | **fácil** | caro |
+
+A pergunta foi escolhida bem o bastante para expor isso, e a suíte tem um
+teste que **falha se um motor futuro aceitar `{1,3}`** — para o README não
+ficar errado em silêncio.
+
+O que o SPARQL tem de genuinamente seu é a direção invertida numa expressão:
+`(:conhece|^:conhece)` — o `^` inverte, e é muito mais curto que o `UNION ALL`
+espelhando a tabela em SQL.
+
+### A inferência: o que nenhum dos outros dois modelos faz
+
+Declarando **no vocabulário**, não nos dados:
+
+```turtle
+:conhece      a                   owl:SymmetricProperty .
+:amigoIntimo  rdfs:subPropertyOf  :conhece .
+```
+
+E **um único fato** gravado só como `:amigoIntimo`, ligando os dois
+componentes do grafo: `:p3 (Carla) :amigoIntimo :p10 (Joao)`.
+
+```
+Triplas: 102 declaradas -> 292 após a dedução
+
+  antes da inferência:  Bruno, Carla, Diego, Elisa, Fabio
+  depois:               Bruno, Carla, Diego, Elisa, Fabio, Joao, Kelly
+
+  apareceram por DEDUÇÃO: Joao, Kelly
+```
+
+**A consulta não foi alterada**, e não sabe que `:amigoIntimo` existe. Em SQL
+isso exigiria mudar a consulta ou criar uma `VIEW`; em Cypher, trocar
+`-[:AMIGO]-` por `-[:AMIGO|AMIGO_INTIMO]-` em cada consulta que atravessa
+amizade.
+
+A honestidade da demonstração: `rdflib` **não** faz inferência sozinho — ela
+vem do `owlrl`. Isso importa porque a dedução é capacidade do **modelo**
+(RDF/OWL têm semântica definida para ela), não de uma biblioteca em
+particular. Um motor relacional não tem onde colocar essa semântica; não é
+questão de ninguém ter implementado.
+
+E a primeira versão desta demonstração **não demonstrava nada**: o fato
+deduzido estava entre Iris e Joao, a 6 saltos de Ana — longe demais para
+entrar no limite de 3, e a resposta não mudava. A suíte agora exige que Joao e
+Kelly apareçam.
+
+### `graphql/` — o que o modelo não expressa
+
+GraphQL é uma linguagem de **seleção** sobre um grafo de tipos, não de
+**consulta** sobre um grafo de dados. Há três saídas, e as três estão
+implementadas para que a afirmação seja verificável:
+
+**Saída 1 — aninhar `amigos` três níveis à mão.** É o que os tutoriais
+mostram. Medido:
+
+```
+  nós na resposta:        14
+  pessoas distintas:      6
+  a própria Ana voltou:   SIM
+  caminhos com repetição: 6
+  exemplo:                Ana -> Bruno -> Ana
+```
+
+A resposta correta tem **5 pessoas**. Esta árvore tem 14 nós e 6 nomes, **com
+a origem entre eles** — porque nada no esquema impede o ciclo (`amigos:
+[Pessoa!]!` é um tipo recursivo sem noção de caminho percorrido), e a resposta
+é uma árvore com repetição, não um conjunto com distâncias. A profundidade
+está **no texto da consulta**: "até 4 saltos" é outra consulta, não outro
+argumento.
+
+**Saída 2 — um campo que já é a resposta.** `alcance(de: "Ana", saltos: 3)`
+acerta, e acerta porque **a travessia roda em Python** — o resolver chama o
+mesmo BFS de `python/referencia.py`. O `saltos: 3` é um argumento que o
+servidor interpreta; o `3` de `*1..3` em Cypher é parte da expressão avaliada
+pelo motor. A diferença não é cosmética.
+
+**Saída 3 — admitir que a pergunta é outra.** Mostrar só o lado em que GraphQL
+perde seria escolher a prova. Numa única requisição, com o cliente escolhendo
+o formato:
+
+```
+  Ana (Recife), saldo 834.75
+  amigos: Bruno (Recife), Carla (Olinda)
+  enviou:
+      150.00 para Bruno
+       45.25 para Carla
+```
+
+Três formas de dados — um escalar **calculado**, uma lista de pessoas, e uma
+lista de transações com o destinatário embutido. Em SQL são três consultas, ou
+uma com `JOIN` que devolve linhas repetidas e deixa remontar a hierarquia para
+o cliente. E o `saldo` ser derivado é invisível ao cliente: no tipo, campo
+calculado e campo armazenado são indistinguíveis.
+
+## O menor caminho não é único, e isso mudou a verificação
+
+A pergunta do caminho (*"qual o menor caminho de Ana até Gabi?"*) era
+comparada contra uma resposta gravada, byte a byte — a mesma estratégia que
+funciona para o alcance.
+
+Medindo o Kuzu, as duas cláusulas de menor caminho deram respostas
+**diferentes e as duas corretas**:
+
+```
+SHORTEST       Ana -> Bruno -> Diego -> Fabio -> Gabi    4 saltos
+ALL SHORTEST   Ana -> Carla -> Elisa -> Fabio -> Gabi    4 saltos
+```
+
+Ana alcança Fabio pelos dois lados do ciclo, com o mesmo comprimento. Então
+comparar o caminho literalmente testaria a **ordem interna** de cada motor e
+reprovaria resposta certa.
+
+`python/valida_caminho.py` verifica o que é bem definido: o número de saltos,
+os extremos, que **cada par consecutivo é uma amizade real**, e que nenhum nó
+se repete. Testado nos dois sentidos — aceita as implementações corretas e
+recusa caminho com salto inventado, com contagem errada e com nó repetido,
+cada um com a mensagem do defeito.
+
+A pergunta do alcance **continua** com comparação literal, e deve: ali a
+resposta é um conjunto com distâncias mínimas, que é único.
+
+## As duas fontes do domínio derivaram, e agora há um teste
+
+O domínio entra nos motores por dois caminhos: os **CSV** (que Python, Kuzu e
+rdflib leem direto) e os `INSERT` literais de `sql/carga.sql` (que SQLite e
+PostgreSQL usam). A duplicação é deliberada — `.import` e `COPY` são comandos
+de *ferramenta*, não de linguagem, e divergem.
+
+E as duas derivaram: `saldo_inicial` foi acrescentado ao esquema e ao
+`carga.sql` e **esquecido no CSV**. Três implementações passaram a rodar com
+um domínio diferente das outras, e **nada acusava** — o sintoma só apareceu
+quando o Kuzu achou 3 campos onde o esquema prometia 4. Por acidente, não por
+verificação.
+
+`python/confere_carga.py` compara as duas fontes linha por linha e falha se
+discordarem. Sem ele, manter as duas em sincronia era só boa intenção.
 
 ## Os quatro códigos de erro que eu escolhi errado
 
@@ -145,10 +329,21 @@ válido num contexto e inválido no outro, e a diferença não está na procedur
 ## Rodando
 
 ```bash
+# relacional
 sudo apt-get install -y sqlite3 postgresql postgresql-client
 sudo service postgresql start
+
+# grafo, RDF e GraphQL -- embarcados, sem servidor
+python3 -m venv .venv
+./.venv/bin/pip install -r requirements.txt
+
 ./verifica.sh
 ```
+
+As versões em `requirements.txt` são **fixas**, pelo mesmo argumento do
+nixpkgs travado: "latest" não responde *"com o que isso foi verificado"*. E
+aqui o risco é concreto — a suíte afirma que o SPARQL 1.1 recusa `{1,3}`, e um
+rdflib futuro que aceitasse como extensão tornaria o README errado.
 
 A suíte **pula** o que não está instalado em vez de falhar: o projeto depende
 de bancos que não cabem todos em qualquer máquina, e uma suíte que falha por
@@ -160,7 +355,13 @@ ausência de Oracle não distingue "quebrou" de "não tem".
   ok    o MESMO .sql dá a MESMA resposta no PostgreSQL
   ok    os 8 testes da procedure passam
   ok    nenhum ERRCODE da classe P0 (colidiria com os do PostgreSQL)
-  12 passaram, 0 falharam
+  ok    dados/*.csv e sql/carga.sql declaram o mesmo dominio
+  ok    Cypher da a MESMA resposta, byte a byte
+  ok    Cypher: 4 saltos, caminho válido (Ana -> Bruno -> Diego -> Fabio -> Gabi)
+  ok    SPARQL 1.1 recusa {1,3}, como o padrao manda
+  ok    a inferencia traz Joao e Kelly por DEDUCAO
+  ok    o aninhamento a mao traz a ORIGEM de volta (ciclo)
+  22 passaram, 0 falharam
 ```
 
 ## Roadmap
@@ -170,9 +371,9 @@ ausência de Oracle não distingue "quebrou" de "não tem".
 | **Python** | a referência, e o BFS que não tem mágica | ✅ feito |
 | **SQL ANSI** | CTE recursivo, e o preço de não ter travessia | ✅ feito |
 | **PL/pgSQL** | atomicidade, `ERRCODE`, e transação do chamador | ✅ feito |
-| **Cypher** | travessia como primitiva da linguagem | a fazer |
-| **SPARQL** | *property path*, e a inferência que nenhum dos outros faz | a fazer |
-| **GraphQL** | **o que o modelo não consegue expressar** | a fazer |
+| **Cypher** | travessia como primitiva, em Kuzu embarcado | ✅ feito |
+| **SPARQL** | que o padrão **não** limita repetição, e a inferência | ✅ feito |
+| **GraphQL** | **o que o modelo não consegue expressar**, medido | ✅ feito |
 | **T-SQL** | `TRY...CATCH`, `XACT_ABORT`, e `THROW` vs `RAISERROR` | a fazer — exige SQL Server em contêiner |
 | **PL/SQL** | `PRAGMA AUTONOMOUS_TRANSACTION` e `RAISE_APPLICATION_ERROR` | a fazer — exige Oracle em contêiner |
 
