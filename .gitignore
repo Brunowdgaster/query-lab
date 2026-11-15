@@ -3,3 +3,7 @@
 
 # O venv e ambiente, nao codigo: reconstruivel por pip install
 .venv/
+
+# Artefato de build do Python: nao e codigo, e gerado a cada execucao.
+__pycache__/
+*.py[cod]
