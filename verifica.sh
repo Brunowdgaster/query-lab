@@ -16,13 +16,33 @@ OK=0
 FALHOU=0
 PULADO=0
 
+# QLAB_EXIGE=1 transforma todo "pulado" em FALHA.
+#
+# Local, pular e certo: o projeto depende de bancos que nao cabem em qualquer
+# maquina. No CI, pular e PERIGOSO -- se o Postgres nao subir, a suite
+# passaria verde tendo verificado um terco do que diz verificar, e o log
+# esconderia isso entre os ok.
+#
+# E a mesma licao do job do AutoHotkey no p12: falhar ALTO quando a
+# dependencia nao apareceu, em vez de deixar o teste reportar a ausencia como
+# se fosse resultado.
+EXIGE="${QLAB_EXIGE:-0}"
+
 verde()    { printf '\033[32m%s\033[0m' "$1"; }
 vermelho() { printf '\033[31m%s\033[0m' "$1"; }
 cinza()    { printf '\033[90m%s\033[0m' "$1"; }
 
 passa()  { printf '  %s    %s\n' "$(verde ok)" "$1"; OK=$((OK+1)); }
 falha()  { printf '  %s %s\n' "$(vermelho FALHA)" "$1"; FALHOU=$((FALHOU+1)); }
-pula()   { printf '  %s  %s\n' "$(cinza pulado)" "$1"; PULADO=$((PULADO+1)); }
+pula() {
+    if [ "$EXIGE" = "1" ]; then
+        printf '  %s  %s\n' "$(vermelho FALHA)" "$1 (QLAB_EXIGE=1)"
+        FALHOU=$((FALHOU+1))
+    else
+        printf '  %s  %s\n' "$(cinza pulado)" "$1"
+        PULADO=$((PULADO+1))
+    fi
+}
 
 secao() { printf '\n%s\n' "$(cinza "$1")"; }
 

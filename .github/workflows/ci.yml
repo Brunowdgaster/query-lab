@@ -1,0 +1,47 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  consultas:
+    name: consultas (SQL ANSI, PL/pgSQL, Python)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: motores de banco
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq sqlite3 postgresql postgresql-client
+          sudo service postgresql start
+          # Falha ALTO se o servidor nao responder. Sem isto a suite PULARIA a
+          # metade PostgreSQL e passaria verde tendo verificado um terco do que
+          # diz verificar.
+          for i in 1 2 3 4 5; do
+            sudo -u postgres psql -tAc 'select 1' >/dev/null 2>&1 && break
+            sleep 2
+          done
+          sudo -u postgres psql -tAc 'select version()'
+          sqlite3 --version
+
+      - name: a suite, em modo exigente
+        # QLAB_EXIGE=1 transforma "pulado" em FALHA: no CI, uma dependencia
+        # ausente e um defeito do ambiente, nao um resultado.
+        env:
+          QLAB_EXIGE: '1'
+        run: ./verifica.sh
+
+      - name: a referencia gravada esta em dia
+        # Separado da suite de proposito: se os CSV mudarem e o esperado/ nao
+        # for regravado, TODAS as outras implementacoes passariam a ser
+        # conferidas contra uma resposta obsoleta. Este passo diz isso com
+        # nome proprio no log.
+        run: |
+          python3 python/referencia.py --gravar
+          git diff --exit-code -- dados/esperado/ \
+            || { echo 'dados/esperado/ esta velho: rode referencia.py --gravar'; exit 1; }
