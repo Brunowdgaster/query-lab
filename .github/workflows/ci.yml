@@ -111,6 +111,14 @@ jobs:
     #   * o banco leva ~78 s para subir na primeira vez (medido localmente),
     #     porque cria o CDB.
     #
+    # MEDIDO NO RUNNER, depois de o job existir: o pull levou **169 s** e a
+    # suite inteira levou **24 s** -- subir o Oracle, criar o esquema,
+    # traduzir a carga, compilar a procedure e rodar os 11 casos.
+    #
+    # O primeiro argumento se confirma: 169 s nao devem ser cobrados do job
+    # das consultas. O segundo encolheu -- os ~78 s sao desta maquina, onde o
+    # WSL2 e o /mnt/c cobram o preco deles, e nao do runner.
+    #
     # E ele existe porque a afirmação de que "não cabe no runner" era FALSA: o
     # passo `o disco do runner, medido` do outro job mostrou **91 GB livres**,
     # contra os ~14 GB que eu havia afirmado sem medir.

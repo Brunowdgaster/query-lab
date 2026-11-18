@@ -403,6 +403,27 @@ Nenhum dos dois é "não cabe". São argumentos de **tempo e de isolamento de
 falha**, e o job `plsql` imprime os dois tempos — o do `docker pull` e o da
 suíte — justamente para que ninguém precise acreditar em mim sobre eles.
 
+**E os números chegaram:**
+
+```
+--- pull levou 169s ---
+container-registry.oracle.com/database/free:latest  13.8GB
+11 passaram, 0 falharam
+--- a suíte PL/SQL levou 24s ---
+```
+
+O argumento do download **se confirma**: 169 s é quase três minutos que não
+devem ser cobrados do job que verifica as outras sete linguagens.
+
+O segundo argumento **encolheu**. Eu disse que o banco leva ~78 s só para
+subir — e leva, **nesta máquina**, onde o `/mnt/c` e o WSL2 cobram o preço
+deles. No runner, a suíte inteira — subir o Oracle, criar o esquema, traduzir
+a carga, compilar a procedure e rodar os 11 casos — levou **24 s**.
+
+Está escrito aqui porque a alternativa era deixar no README um número local
+apresentado como se valesse para o CI, que é a mesma classe de erro que esta
+seção inteira documenta.
+
 ### E por que isto está no README em vez de corrigido em silêncio
 
 Porque é a décima-segunda vez que este portfólio registra o mesmo padrão: **o
