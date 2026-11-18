@@ -321,6 +321,55 @@ else
     fi
 fi
 
+# ---------------------------------------------------------------------------
+secao 'tsql/ — T-SQL no SQL Server, e o que o dialeto cobra'
+
+# O gate tem DOIS niveis, e os dois sao necessarios: `docker` pode existir sem
+# o daemon responder (e, no WSL2, o daemon morre junto com a VM -- medido: o
+# conteiner some 9 s depois de a VM reiniciar, com exit 255 e sem mensagem).
+# Testar so o comando daria FALHA onde o certo e PULAR.
+if ! tem docker || ! docker info >/dev/null 2>&1; then
+    pula 'docker ausente ou sem daemon: T-SQL precisa do contêiner do SQL Server'
+    pula 'tsql/transferir.sql (os 11 casos)'
+elif ! docker image inspect mcr.microsoft.com/mssql/server:2022-latest >/dev/null 2>&1      && [ "${QL_BAIXA_IMAGENS:-0}" != 1 ]; then
+    # A imagem tem ~1,5 GB. Baixar sem avisar, de dentro de uma suite de
+    # teste, seria gastar a banda de quem rodou sem pedir -- entao a suite
+    # PULA e diz como habilitar.
+    pula 'imagem do SQL Server ausente (~1,5 GB): QL_BAIXA_IMAGENS=1 para baixar'
+    pula 'tsql/transferir.sql (os 11 casos)'
+else
+    # O retorno capturado ANTES de qualquer cano, como no plpgsql: medir `$?`
+    # depois de um `| grep` mede o grep. Esse erro ja apareceu tres vezes
+    # neste portfolio.
+    saida=$(bash tsql/roda.sh 2>&1); ret=$?
+
+    # O esquema ANSI rodando no TERCEIRO motor e uma afirmacao que
+    # `sql/esquema.sql` faz no proprio cabecalho. Aqui ela e VERIFICADA: se o
+    # arquivo precisasse de uma linha de T-SQL, a carga nao completaria.
+    if printf '%s' "$saida" | grep -q '(12 rows affected)'; then
+        passa 'o MESMO sql/esquema.sql e sql/carga.sql rodam no SQL Server, sem alteração'
+    else
+        falha 'o esquema ANSI não carregou no SQL Server'
+    fi
+
+    if [ $ret -eq 0 ] && printf '%s' "$saida" | grep -q '11 passaram, 0 falharam'; then
+        passa 'os 11 casos da procedure T-SQL passam (7 iguais ao PL/pgSQL + 4 do dialeto)'
+    else
+        falha "testes da procedure T-SQL: retorno=$ret"
+        printf '%s
+' "$saida" | sed 's/^/        /' | tail -8
+    fi
+
+    # Os numeros de erro do usuario TEM de ser >= 50000 no SQL Server, e isso
+    # e verificado no ARQUIVO e nao so no motor: um `THROW 4002` compila e
+    # falha apenas na execucao, com mensagem que nao menciona a fronteira.
+    if ! grep -qE 'THROW +[0-9]{1,4},' tsql/transferir.sql; then
+        passa 'todo THROW usa número >= 50000 (abaixo disso pertence ao SQL Server)'
+    else
+        falha 'há THROW com número < 50000: esses são reservados ao motor'
+    fi
+fi
+
 printf '\n%s\n' '=============================================================='
 if [ "$PULADO" -gt 0 ]; then
     printf '  %s passaram, %s falharam, %s pulado(s)\n' \
