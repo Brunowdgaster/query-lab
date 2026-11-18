@@ -45,13 +45,26 @@ pula() {
 }
 
 # `dispensa` e um pulado que NAO falha nem sob QLAB_EXIGE=1 -- e existe para
-# exatamente um caso, com o motivo medido:
+# exatamente um caso.
 #
-#     a imagem do Oracle Database Free tem 13,8 GB (medido com `docker
-#     images`, nao estimado), e o runner do GitHub Actions tem cerca de 14 GB
-#     de disco no total, ja com o sistema e as ferramentas dentro.
+# A JUSTIFICATIVA MUDOU, e a versao anterior esta aqui porque o erro e
+# instrutivo:
 #
-# Ela nao cabe, e isso e um fato do ambiente, nao um defeito do projeto.
+#   ERA: "a imagem do Oracle tem 13,8 GB e o runner do GitHub tem cerca de
+#   14 GB de disco, entao nao cabe". A primeira metade era medida; a segunda
+#   eu afirmei de memoria.
+#
+#   O CI mede o disco num passo proprio -- que eu escrevi para dar EVIDENCIA a
+#   essa afirmacao -- e o resultado foi 91 GB LIVRES. A imagem cabe com folga,
+#   e o passo imprimiu o aviso de reavaliar que eu havia deixado nele.
+#
+#   E AGORA: o PL/SQL roda no CI, num job SEPARADO (`plsql`). A dispensa vale
+#   para o job das consultas, onde baixar 13,8 GB atrasaria a verificacao das
+#   outras sete linguagens e faria uma falha de rede aparecer como falha
+#   delas.
+#
+# A licao e a de sempre neste projeto: a medicao que eu criei para confirmar o
+# que eu dizia refutou o que eu dizia.
 #
 # A alternativa seria baixar o EXIGE para todos os pulados, e seria pior: o
 # EXIGE existe porque uma suite que passa verde tendo verificado um terco do
@@ -404,8 +417,8 @@ if ! tem docker || ! docker info >/dev/null 2>&1; then
     pula 'docker ausente ou sem daemon: PL/SQL precisa do contêiner do Oracle'
     pula 'plsql/transferir.sql (os 11 casos)'
 elif [ "${QL_SEM_ORACLE:-0}" = 1 ]; then
-    dispensa 'Oracle: a imagem tem 13,8 GB e não cabe no runner (~14 GB de disco)'
-    dispensa 'plsql/transferir.sql (os 11 casos) — roda localmente, não no CI'
+    dispensa 'Oracle: 13,8 GB de imagem rodam no job `plsql`, separado deste'
+    dispensa 'plsql/transferir.sql (os 11 casos) — verificado lá, não aqui'
 elif ! docker image inspect container-registry.oracle.com/database/free:latest >/dev/null 2>&1 \
      && [ "${QL_BAIXA_IMAGENS:-0}" != 1 ]; then
     pula 'imagem do Oracle ausente (13,8 GB): QL_BAIXA_IMAGENS=1 para baixar'

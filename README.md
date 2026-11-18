@@ -9,9 +9,14 @@ têm de dar **a mesma resposta**, verificada por script.
 > **[COMPARACAO.md](COMPARACAO.md)**.
 >
 > O T-SQL e o PL/SQL exigem contêineres, e os tamanhos aqui são **medidos**:
-> SQL Server **2,21 GB**, Oracle **13,8 GB**. O CI roda o T-SQL e
-> **dispensa** o PL/SQL, porque a imagem do Oracle não cabe no runner — com o
-> disco medido no próprio log, não afirmado.
+> SQL Server **2,21 GB**, Oracle **13,8 GB**. **O CI roda os dois**, o Oracle
+> num job separado.
+>
+> Eu havia escrito que o PL/SQL ficaria fora do CI porque 13,8 GB *"não cabem
+> nos ~14 GB do runner"*. Acrescentei um passo que mede o disco para dar
+> evidência a isso, e ele mediu **91 GB livres** — refutando a afirmação que
+> fui buscar nele. A medição que eu criei para me confirmar me corrigiu, e
+> está em [Por que o PL/SQL tem job próprio](#por-que-o-plsql-tem-job-próprio).
 
 A tese não é "sei oito dialetos". É que **modelo de dados é uma escolha com
 consequências**, e a única forma honesta de mostrar isso é fazer a mesma
@@ -349,6 +354,65 @@ válido num contexto e inválido no outro, e a diferença não está na procedur
 **`SELECT INTO` sem `STRICT` não falha quando não acha.** Ele deixa a variável
 `NULL` e **segue em frente**, e a falha aparece muito depois, como violação de
 `NOT NULL` no `INSERT`, com mensagem que não menciona o nome errado.
+
+## Por que o PL/SQL tem job próprio
+
+Porque a razão que eu dei primeiro era falsa, e o teste que escrevi para
+provar que ela era verdadeira provou o contrário.
+
+**O que eu afirmei:** que o PL/SQL não poderia rodar no CI, porque a imagem do
+Oracle tem 13,8 GB e *"o runner do GitHub tem cerca de 14 GB de disco"*.
+
+A primeira metade era medida — `docker images` diz 13,8 GB, e isso já havia
+corrigido um registro meu anterior que dizia "~2,5 GB". **A segunda metade eu
+afirmei de memória.**
+
+Então criei no workflow um passo chamado *"o disco do runner, medido"*, com
+este trecho dentro:
+
+```bash
+livre_gb=$(df -BG --output=avail / | tail -1 | tr -dc '0-9')
+echo "livre em /: ${livre_gb} GB   |   imagem do Oracle: 14 GB"
+if [ "$livre_gb" -gt 20 ]; then
+  echo "NOTA: ha espaco de sobra -- vale reavaliar a dispensa do PL/SQL"
+fi
+```
+
+A intenção era deixar a dispensa com evidência no log em vez de apoiada numa
+frase do README. E a primeira execução imprimiu:
+
+```
+livre em /: 91 GB   |   imagem do Oracle: 14 GB
+NOTA: ha espaco de sobra -- vale reavaliar a dispensa do PL/SQL
+```
+
+**91 GB.** O aviso que eu havia escrito para o caso de eu estar errado
+disparou na primeira vez que o código rodou.
+
+### A razão verdadeira, que é mais fraca e por isso está escrita
+
+O PL/SQL roda no CI. Num job separado, por dois motivos que **sobrevivem à
+medição**:
+
+* baixar 13,8 GB dentro do job das consultas atrasaria a verificação das
+  outras sete linguagens, e faria uma **falha de rede aparecer como falha
+  delas**;
+* o banco leva ~78 s só para subir, porque cria o CDB.
+
+Nenhum dos dois é "não cabe". São argumentos de **tempo e de isolamento de
+falha**, e o job `plsql` imprime os dois tempos — o do `docker pull` e o da
+suíte — justamente para que ninguém precise acreditar em mim sobre eles.
+
+### E por que isto está no README em vez de corrigido em silêncio
+
+Porque é a décima-segunda vez que este portfólio registra o mesmo padrão: **o
+instrumento esconde — ou neste caso refuta — o próprio sinal.** As onze
+anteriores estão em `poliglota/CONTEXTO.md`, seção 6.
+
+A diferença desta é que o instrumento funcionou *perfeitamente*. Ele mediu o
+que prometia medir, e o que ele mediu contradisse quem o escreveu. É o melhor
+resultado possível para um teste, e o pior possível para a afirmação que ele
+foi criado para apoiar.
 
 ## Rodando
 

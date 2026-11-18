@@ -40,26 +40,26 @@ jobs:
           # linguagens e passaria verde.
           ./.venv/bin/python -c 'import kuzu, rdflib, owlrl, graphql; print("kuzu", kuzu.__version__, "| rdflib", rdflib.__version__, "| graphql-core", graphql.version)'
 
-      - name: o disco do runner, medido (e por que o Oracle fica fora)
-        # Este passo existe para a DISPENSA do PL/SQL ter evidencia no log, e
-        # nao ser uma afirmacao do README.
+      - name: o disco do runner, medido
+        # Este passo foi escrito para dar EVIDENCIA a uma afirmacao minha --
+        # que a imagem do Oracle (13,8 GB) nao cabia no runner, que eu dizia
+        # ter "~14 GB de disco".
         #
-        # A imagem do Oracle Database Free tem 13,8 GB -- medido com `docker
-        # images`, nao estimado; o registro anterior dizia "~2,5 GB" e estava
-        # errado por mais de cinco vezes.
+        # Ele REFUTOU a afirmacao na primeira execucao: 91 GB livres. A
+        # imagem cabe com folga, e o proprio passo imprimiu o aviso de
+        # reavaliar que eu havia deixado nele.
         #
-        # Se algum dia o runner crescer e a imagem couber, este log e o lugar
-        # onde isso vai aparecer primeiro.
+        # Entao o PL/SQL passou a rodar no CI, num job separado (`plsql`
+        # abaixo), e este passo continua aqui porque foi ele que pegou o erro
+        # -- e porque o numero pode mudar outra vez.
         run: |
           echo '--- espaco livre no runner ---'
           df -h / /mnt 2>/dev/null || df -h /
           echo
           livre_gb=$(df -BG --output=avail / | tail -1 | tr -dc '0-9')
           echo "livre em /: ${livre_gb} GB   |   imagem do Oracle: 14 GB"
-          if [ "$livre_gb" -gt 20 ]; then
-            echo "NOTA: ha espaco de sobra -- vale reavaliar a dispensa do PL/SQL"
-          else
-            echo "confirmado: a imagem do Oracle nao cabe; o PL/SQL roda localmente"
+          if [ "$livre_gb" -lt 20 ]; then
+            echo "ATENCAO: o runner encolheu -- o job plsql vai falhar no pull"
           fi
 
       - name: a suite, em modo exigente
@@ -71,11 +71,19 @@ jobs:
         # banda de quem rodou um teste sem avisar nao e aceitavel; num runner
         # descartavel, e.
         #
-        # QL_SEM_ORACLE=1 dispensa o PL/SQL -- um "pulado que nao falha", com
-        # motivo escrito, contado separado no resumo e com o disco medido no
-        # passo anterior. E a UNICA dispensa do projeto, e ela e estreita de
-        # proposito: baixar o EXIGE para todos os pulados seria pior que nao
-        # ter EXIGE.
+        # QL_SEM_ORACLE=1 dispensa o PL/SQL NESTE job -- e a razao mudou, e
+        # vale registrar qual era.
+        #
+        # ERA: "a imagem tem 13,8 GB e nao cabe no runner de ~14 GB". O passo
+        # anterior mediu 91 GB livres e refutou isso.
+        #
+        # E AGORA: baixar 13,8 GB atrasaria o job que verifica as outras sete
+        # linguagens, e uma falha no pull apareceria como falha das consultas.
+        # Entao o PL/SQL tem job proprio (`plsql`), que roda em paralelo e
+        # pode levar o tempo que precisar.
+        #
+        # A dispensa continua estreita de proposito: baixar o EXIGE para todos
+        # os pulados seria pior que nao ter EXIGE.
         env:
           QLAB_EXIGE: '1'
           QL_BAIXA_IMAGENS: '1'
@@ -91,3 +99,50 @@ jobs:
           python3 python/referencia.py --gravar
           git diff --exit-code -- dados/esperado/ \
             || { echo 'dados/esperado/ esta velho: rode referencia.py --gravar'; exit 1; }
+
+  plsql:
+    name: plsql (Oracle Database Free, em contêiner)
+    runs-on: ubuntu-latest
+    # Job separado, e não um passo do outro, por duas razões medidas:
+    #
+    #   * a imagem tem **13,8 GB**, e baixá-la dentro do job das consultas
+    #     atrasaria a verificação das outras sete linguagens -- além de fazer
+    #     uma falha de rede aparecer como falha delas;
+    #   * o banco leva ~78 s para subir na primeira vez (medido localmente),
+    #     porque cria o CDB.
+    #
+    # E ele existe porque a afirmação de que "não cabe no runner" era FALSA: o
+    # passo `o disco do runner, medido` do outro job mostrou **91 GB livres**,
+    # contra os ~14 GB que eu havia afirmado sem medir.
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: a imagem do Oracle, com o tempo medido
+        # O tempo é impresso porque ele é o único argumento que resta para
+        # manter o PL/SQL fora do job principal. Se um dia a imagem encolher
+        # ou o cache mudar, é aqui que se vê.
+        run: |
+          inicio=$(date +%s)
+          docker pull container-registry.oracle.com/database/free:latest
+          fim=$(date +%s)
+          echo "--- pull levou $((fim - inicio))s ---"
+          docker images --format '{{.Repository}}:{{.Tag}}  {{.Size}}' \
+            | grep oracle
+          df -h / | tail -1
+
+      - name: python3 (a tradução da carga)
+        # O `traduz_carga.py` é Python puro e deriva a carga do Oracle de
+        # `sql/carga.sql`, porque o Oracle não aceita `VALUES` multilinha --
+        # recurso do SQL-92.
+        run: python3 --version
+
+      - name: os 11 casos do PL/SQL
+        # O tempo total também é medido, pelo mesmo motivo do pull.
+        run: |
+          inicio=$(date +%s)
+          bash plsql/roda.sh | tee /tmp/saida_plsql.txt
+          fim=$(date +%s)
+          echo "--- a suíte PL/SQL levou $((fim - inicio))s ---"
+          grep -q '11 passaram, 0 falharam' /tmp/saida_plsql.txt \
+            || { echo 'os 11 casos do PL/SQL não passaram'; exit 1; }
