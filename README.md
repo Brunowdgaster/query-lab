@@ -4,10 +4,14 @@ Um domínio (grafo social + transações), uma pergunta, e implementações em
 **SQL ANSI, PL/pgSQL, PL/SQL, T-SQL, Cypher, SPARQL, GraphQL e Python** — que
 têm de dar **a mesma resposta**, verificada por script.
 
-> **Status:** 6 das 8 linguagens feitas e verificadas, com **22 testes**.
-> Python, SQL ANSI, PL/pgSQL, Cypher, SPARQL e GraphQL estão completos. Faltam
-> T-SQL e PL/SQL, que exigem contêineres de 1,5 GB e 2,5 GB. Ver
-> [Roadmap](#roadmap).
+> **Status: as 8 linguagens feitas e verificadas**, com **28 testes**.
+> A comparação entre os três dialetos procedurais está em
+> **[COMPARACAO.md](COMPARACAO.md)**.
+>
+> O T-SQL e o PL/SQL exigem contêineres, e os tamanhos aqui são **medidos**:
+> SQL Server **2,21 GB**, Oracle **13,8 GB**. O CI roda o T-SQL e
+> **dispensa** o PL/SQL, porque a imagem do Oracle não cabe no runner — com o
+> disco medido no próprio log, não afirmado.
 
 A tese não é "sei oito dialetos". É que **modelo de dados é uma escolha com
 consequências**, e a única forma honesta de mostrar isso é fazer a mesma
@@ -59,11 +63,31 @@ montado pela implementação em C e executado pelos sete portes; no
 pelos portes em OCaml e F#. **A referência é sempre a implementação mais
 simples, nunca a mais rápida.**
 
-### `sql/` — SQL ANSI, e o mesmo arquivo em dois motores
+### `sql/` — SQL ANSI, e o mesmo arquivo em QUATRO motores
 
 `esquema.sql`, `carga.sql`, `alcance.sql` e `saldo.sql` rodam **sem uma linha
 de diferença** em SQLite 3.46 e PostgreSQL 18.6, e a suíte verifica que os
-dois dão a mesma resposta. Isso é o que torna a comparação com Cypher e SPARQL
+dois dão a mesma resposta.
+
+**E o escopo cresceu.** Com o T-SQL e o PL/SQL prontos, o esquema foi testado
+em dois motores a mais:
+
+| | SQLite | PostgreSQL | SQL Server | Oracle |
+|---|---|---|---|---|
+| `sql/esquema.sql` | ✅ | ✅ | ✅ | ✅ |
+| `sql/carga.sql` | ✅ | ✅ | ✅ | ❌ |
+
+Quatro motores, um arquivo de esquema, **zero linhas de dialeto** — tipos,
+`CHECK`, chaves estrangeiras e índices, tudo no padrão e tudo aceito.
+
+A carga é que não atravessa, e por um motivo que surpreende: **`VALUES` com
+várias linhas está no SQL-92 e o Oracle não aceita.** É a divergência mais
+básica encontrada neste projeto, num recurso do padrão com mais de trinta anos.
+O `plsql/traduz_carga.py` deriva a forma do Oracle **da mesma fonte**, em vez
+de haver um segundo arquivo de carga — porque duas fontes para o mesmo domínio
+já divergiram aqui uma vez, e o
+[teste que nasceu disso](#as-duas-fontes-do-domínio-derivaram-e-agora-há-um-teste)
+é o que conta a história. Isso é o que torna a comparação com Cypher e SPARQL
 honesta: a diferença medida é de **modelo**, não de fornecedor.
 
 O preço do ANSI está documentado em cada arquivo. O mais visível é o controle
@@ -374,12 +398,21 @@ ausência de Oracle não distingue "quebrou" de "não tem".
 | **Cypher** | travessia como primitiva, em Kuzu embarcado | ✅ feito |
 | **SPARQL** | que o padrão **não** limita repetição, e a inferência | ✅ feito |
 | **GraphQL** | **o que o modelo não consegue expressar**, medido | ✅ feito |
-| **T-SQL** | `TRY...CATCH`, `XACT_ABORT`, e `THROW` vs `RAISERROR` | a fazer — exige SQL Server em contêiner |
-| **PL/SQL** | `PRAGMA AUTONOMOUS_TRANSACTION` e `RAISE_APPLICATION_ERROR` | a fazer — exige Oracle em contêiner |
+| **T-SQL** | que um `ROLLBACK` aninhado **destrói a transação do chamador** | ✅ feito |
+| **PL/SQL** | que `SELECT INTO` é estrito por padrão, e que **todo DDL commita** | ✅ feito |
 
-Os dois últimos são os caros: SQL Server e Oracle rodam de graça em edição de
-desenvolvedor, mas são imagens de 1,5 GB e 2,5 GB. Eles entram por último, e
-a suíte já está preparada para pulá-los.
+**As oito estão feitas.** Os dois últimos custaram contêiner, e os tamanhos
+estão medidos e não estimados: SQL Server Developer **2,21 GB**, Oracle
+Database 23ai Free **13,8 GB** — o registro deste portfólio dizia "~2,5 GB"
+para o Oracle, e estava errado por mais de cinco vezes.
+
+As duas edições são gratuitas (Developer é licenciada para desenvolvimento e
+teste; Free é gratuita até em produção, com 12 GB de dados e 2 GB de RAM), e
+**nenhuma pediu cadastro ou chave**.
+
+E elas não cabem juntas nesta máquina: o WSL2 expõe 3,8 GB, o SQL Server
+reserva ~2,6 GB e o Oracle pede 2 GB. Então **cada `roda.sh` para o outro
+banco antes de subir o seu**, e a suíte roda os dois em sequência.
 
 ## Licença
 

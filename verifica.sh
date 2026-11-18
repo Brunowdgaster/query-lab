@@ -44,6 +44,33 @@ pula() {
     fi
 }
 
+# `dispensa` e um pulado que NAO falha nem sob QLAB_EXIGE=1 -- e existe para
+# exatamente um caso, com o motivo medido:
+#
+#     a imagem do Oracle Database Free tem 13,8 GB (medido com `docker
+#     images`, nao estimado), e o runner do GitHub Actions tem cerca de 14 GB
+#     de disco no total, ja com o sistema e as ferramentas dentro.
+#
+# Ela nao cabe, e isso e um fato do ambiente, nao um defeito do projeto.
+#
+# A alternativa seria baixar o EXIGE para todos os pulados, e seria pior: o
+# EXIGE existe porque uma suite que passa verde tendo verificado um terco do
+# que promete e mais perigosa que uma que falha.
+#
+# Entao a dispensa:
+#
+#   * exige `QL_SEM_ORACLE=1`, posta explicitamente por quem roda;
+#   * imprime "dispensado" e nao "pulado", com o motivo na linha;
+#   * e e CONTADA separadamente no resumo, para nao se esconder entre os ok.
+#
+# Localmente, sem a variavel, o Oracle ausente volta a ser um pulado normal --
+# e com QLAB_EXIGE=1 volta a ser falha.
+DISPENSADO=0
+dispensa() {
+    printf '  %s  %s\n' "$(cinza dispensado)" "$1"
+    DISPENSADO=$((DISPENSADO+1))
+}
+
 secao() { printf '\n%s\n' "$(cinza "$1")"; }
 
 # `tem` existe para a suíte PULAR, e não falhar, quando um motor não está
@@ -370,13 +397,60 @@ else
     fi
 fi
 
-printf '\n%s\n' '=============================================================='
-if [ "$PULADO" -gt 0 ]; then
-    printf '  %s passaram, %s falharam, %s pulado(s)\n' \
-        "$(verde "$OK")" "$FALHOU" "$(cinza "$PULADO")"
+# ---------------------------------------------------------------------------
+secao 'plsql/ — PL/SQL no Oracle, o mais estrito dos três'
+
+if ! tem docker || ! docker info >/dev/null 2>&1; then
+    pula 'docker ausente ou sem daemon: PL/SQL precisa do contêiner do Oracle'
+    pula 'plsql/transferir.sql (os 11 casos)'
+elif [ "${QL_SEM_ORACLE:-0}" = 1 ]; then
+    dispensa 'Oracle: a imagem tem 13,8 GB e não cabe no runner (~14 GB de disco)'
+    dispensa 'plsql/transferir.sql (os 11 casos) — roda localmente, não no CI'
+elif ! docker image inspect container-registry.oracle.com/database/free:latest >/dev/null 2>&1 \
+     && [ "${QL_BAIXA_IMAGENS:-0}" != 1 ]; then
+    pula 'imagem do Oracle ausente (13,8 GB): QL_BAIXA_IMAGENS=1 para baixar'
+    pula 'plsql/transferir.sql (os 11 casos)'
 else
-    printf '  %s passaram, %s falharam\n' "$(verde "$OK")" "$FALHOU"
+    # A tradução da carga é testada ANTES do banco, porque ela é Python puro e
+    # uma falha nela apareceria, dentro do banco, como "dado faltando" -- com
+    # mensagem sobre regra de negócio em vez de sobre a tradução.
+    n_inserts=$(python3 plsql/traduz_carga.py | grep -c '^INSERT')
+    if [ "$n_inserts" = 33 ]; then
+        passa 'traduz_carga.py deriva as 33 linhas de sql/carga.sql (o Oracle não aceita VALUES multilinha)'
+    else
+        falha "traduz_carga.py derivou $n_inserts linhas, esperado 33"
+    fi
+
+    saida=$(bash plsql/roda.sh 2>&1); ret=$?
+
+    if [ $ret -eq 0 ] && printf '%s' "$saida" | grep -q '11 passaram, 0 falharam'; then
+        passa 'os 11 casos da procedure PL/SQL passam (7 iguais aos outros + 4 do dialeto)'
+    else
+        falha "testes da procedure PL/SQL: retorno=$ret"
+        printf '%s\n' "$saida" | sed 's/^/        /' | tail -10
+    fi
+
+    # A faixa do usuário no Oracle é -20000..-20999, e sair dela faz o próprio
+    # RAISE_APPLICATION_ERROR estourar com ORA-21000 -- medido no caso 9.
+    #
+    # Verificado no ARQUIVO e não só no motor, porque um código fora da faixa
+    # COMPILA e falha apenas quando aquele caminho executa: um erro de regra
+    # de negócio rara ficaria quebrado sem ninguém ver.
+    fora=$(grep -oE 'RAISE_APPLICATION_ERROR\(\s*-[0-9]+' plsql/transferir.sql \
+           | grep -oE '[0-9]+' \
+           | awk '$1 < 20000 || $1 > 20999' | wc -l)
+    if [ "$fora" = 0 ]; then
+        passa 'todo RAISE_APPLICATION_ERROR está na faixa -20000..-20999'
+    else
+        falha "há $fora RAISE_APPLICATION_ERROR fora da faixa do usuário (daria ORA-21000)"
+    fi
 fi
+
+printf '\n%s\n' '=============================================================='
+resumo="$(verde "$OK") passaram, $FALHOU falharam"
+[ "$PULADO" -gt 0 ]     && resumo="$resumo, $(cinza "$PULADO") pulado(s)"
+[ "$DISPENSADO" -gt 0 ] && resumo="$resumo, $(cinza "$DISPENSADO") dispensado(s)"
+printf '  %s\n' "$resumo"
 printf '%s\n\n' '=============================================================='
 
 [ "$FALHOU" -eq 0 ]

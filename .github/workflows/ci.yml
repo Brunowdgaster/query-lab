@@ -8,7 +8,7 @@ on:
 
 jobs:
   consultas:
-    name: consultas (SQL ANSI, PL/pgSQL, Python)
+    name: consultas (SQL ANSI, PL/pgSQL, T-SQL, Python)
     runs-on: ubuntu-latest
 
     steps:
@@ -40,11 +40,46 @@ jobs:
           # linguagens e passaria verde.
           ./.venv/bin/python -c 'import kuzu, rdflib, owlrl, graphql; print("kuzu", kuzu.__version__, "| rdflib", rdflib.__version__, "| graphql-core", graphql.version)'
 
+      - name: o disco do runner, medido (e por que o Oracle fica fora)
+        # Este passo existe para a DISPENSA do PL/SQL ter evidencia no log, e
+        # nao ser uma afirmacao do README.
+        #
+        # A imagem do Oracle Database Free tem 13,8 GB -- medido com `docker
+        # images`, nao estimado; o registro anterior dizia "~2,5 GB" e estava
+        # errado por mais de cinco vezes.
+        #
+        # Se algum dia o runner crescer e a imagem couber, este log e o lugar
+        # onde isso vai aparecer primeiro.
+        run: |
+          echo '--- espaco livre no runner ---'
+          df -h / /mnt 2>/dev/null || df -h /
+          echo
+          livre_gb=$(df -BG --output=avail / | tail -1 | tr -dc '0-9')
+          echo "livre em /: ${livre_gb} GB   |   imagem do Oracle: 14 GB"
+          if [ "$livre_gb" -gt 20 ]; then
+            echo "NOTA: ha espaco de sobra -- vale reavaliar a dispensa do PL/SQL"
+          else
+            echo "confirmado: a imagem do Oracle nao cabe; o PL/SQL roda localmente"
+          fi
+
       - name: a suite, em modo exigente
         # QLAB_EXIGE=1 transforma "pulado" em FALHA: no CI, uma dependencia
         # ausente e um defeito do ambiente, nao um resultado.
+        #
+        # QL_BAIXA_IMAGENS=1 autoriza a suite a baixar a imagem do SQL Server
+        # (2,21 GB). Localmente ela NAO baixa sem autorizacao, porque gastar a
+        # banda de quem rodou um teste sem avisar nao e aceitavel; num runner
+        # descartavel, e.
+        #
+        # QL_SEM_ORACLE=1 dispensa o PL/SQL -- um "pulado que nao falha", com
+        # motivo escrito, contado separado no resumo e com o disco medido no
+        # passo anterior. E a UNICA dispensa do projeto, e ela e estreita de
+        # proposito: baixar o EXIGE para todos os pulados seria pior que nao
+        # ter EXIGE.
         env:
           QLAB_EXIGE: '1'
+          QL_BAIXA_IMAGENS: '1'
+          QL_SEM_ORACLE: '1'
         run: ./verifica.sh
 
       - name: a referencia gravada esta em dia
